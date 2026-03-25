@@ -12,9 +12,109 @@ Connect Claude to your [Fathom AI](https://fathom.video) meeting notes. Once set
 
 ---
 
-## Setup Guide
+## Choose Your Setup
 
-You need two things already installed on your computer: **Node.js** and **Git**. If you don't have them, start with the prerequisites below. If you already have them, skip to Step 1.
+There are **two ways** to use this server. Pick whichever sounds easier to you:
+
+| Option | Best For | What You Need |
+|--------|----------|---------------|
+| **A. Use a Hosted Server** | Non-technical users, quick start | Just your Fathom API key |
+| **B. Run It Locally** | Developers, full control | Node.js + Git installed |
+
+---
+
+## Option A: Use a Hosted Server (Easiest)
+
+If someone has shared a hosted URL with you (like `https://fathom-mcp.up.railway.app/mcp`), you don't need to install anything on your computer. All you need is your Fathom API key.
+
+### Step 1: Get Your Fathom API Key
+
+1. Log into your Fathom account at [fathom.video](https://fathom.video)
+2. Click on **Settings** (gear icon)
+3. Go to **Integrations**, then **API**
+4. Click **Generate API Key**
+5. **Copy the key** and save it somewhere safe
+
+### Step 2: Add to Claude
+
+<details>
+<summary><strong>Claude Desktop (the app)</strong></summary>
+
+Open your Claude Desktop config file:
+
+**On Mac:**
+1. Open Finder
+2. Click **Go** in the menu bar, then **Go to Folder...**
+3. Paste this and press Enter: `~/Library/Application Support/Claude/`
+4. Look for `claude_desktop_config.json` — open it with TextEdit, or create a new file with that name
+
+**On Windows:**
+1. Press `Windows key + R`, type `%APPDATA%\Claude` and press Enter
+2. Look for `claude_desktop_config.json` — open it with Notepad, or create a new file with that name
+
+**Paste this into the file:**
+
+```json
+{
+  "mcpServers": {
+    "fathom": {
+      "type": "streamable-http",
+      "url": "PASTE_SERVER_URL_HERE/mcp",
+      "headers": {
+        "x-fathom-api-key": "PASTE_YOUR_API_KEY_HERE"
+      }
+    }
+  }
+}
+```
+
+Replace:
+- `PASTE_SERVER_URL_HERE` with the hosted server URL you were given (e.g., `https://fathom-mcp.up.railway.app`)
+- `PASTE_YOUR_API_KEY_HERE` with your Fathom API key from Step 1
+
+Save the file.
+
+</details>
+
+<details>
+<summary><strong>Claude Code (the terminal/CLI tool)</strong></summary>
+
+Open `~/.claude.json` in any text editor and add:
+
+```json
+{
+  "mcpServers": {
+    "fathom": {
+      "type": "streamable-http",
+      "url": "PASTE_SERVER_URL_HERE/mcp",
+      "headers": {
+        "x-fathom-api-key": "PASTE_YOUR_API_KEY_HERE"
+      }
+    }
+  }
+}
+```
+
+Replace:
+- `PASTE_SERVER_URL_HERE` with the hosted server URL you were given
+- `PASTE_YOUR_API_KEY_HERE` with your Fathom API key from Step 1
+
+Save the file.
+
+</details>
+
+### Step 3: Restart Claude
+
+- **Claude Desktop:** Fully quit the app (not just close the window) and reopen it
+- **Claude Code:** Close the terminal, open a new one, and start Claude Code again
+
+That's it. You're done.
+
+---
+
+## Option B: Run It Locally
+
+This installs the server on your own computer. Claude launches it automatically when needed.
 
 ### Prerequisites (skip if you already have Node.js and Git)
 
@@ -56,8 +156,6 @@ If either says "command not found" or gives an error, install the missing one be
 
 </details>
 
----
-
 ### Step 1: Get Your Fathom API Key
 
 1. Log into your Fathom account at [fathom.video](https://fathom.video)
@@ -66,11 +164,9 @@ If either says "command not found" or gives an error, install the missing one be
 4. Click **Generate API Key**
 5. **Copy the key** and save it somewhere (a note, a text file, etc.) — you'll paste it in Step 3
 
----
-
 ### Step 2: Download and Build This Project
 
-Open your terminal and run these four commands **one at a time** (copy a line, paste it, press Enter, wait for it to finish, then do the next one):
+Open your terminal and run these commands **one at a time** (copy a line, paste it, press Enter, wait for it to finish, then do the next one):
 
 ```bash
 git clone https://github.com/aaronb458/Fathom_MCP.git
@@ -101,34 +197,14 @@ After the last command finishes, you need to know the **full path** to this fold
 
 It will print something like `/Users/yourname/Fathom_MCP` — save that, you'll need it in the next step.
 
----
-
 ### Step 3: Tell Claude About This Server
-
-Pick the section below that matches how you use Claude:
 
 <details>
 <summary><strong>Claude Desktop (the app)</strong></summary>
 
-You need to edit (or create) a settings file. Here's how:
+Open your Claude Desktop config file (see Option A, Step 2 above for how to find it).
 
-**On Mac:**
-
-1. Open Finder
-2. Click **Go** in the menu bar, then **Go to Folder...**
-3. Paste this and press Enter: `~/Library/Application Support/Claude/`
-4. Look for a file called `claude_desktop_config.json`
-   - If it exists, open it with TextEdit (right-click > Open With > TextEdit)
-   - If it doesn't exist, open TextEdit, create a new empty file, and save it here with the name `claude_desktop_config.json`
-
-**On Windows:**
-
-1. Press `Windows key + R`, type `%APPDATA%\Claude` and press Enter
-2. Look for `claude_desktop_config.json`
-   - If it exists, open it with Notepad
-   - If it doesn't exist, open Notepad, and save a new file here with that name
-
-**Paste this into the file** (replace the entire contents if the file was empty or didn't exist):
+**Paste this into the file:**
 
 ```json
 {
@@ -144,9 +220,9 @@ You need to edit (or create) a settings file. Here's how:
 }
 ```
 
-**Important — replace two things:**
-- Replace `PASTE_YOUR_PATH_HERE` with the path from Step 2 (e.g., `/Users/yourname/Fathom_MCP`)
-- Replace `PASTE_YOUR_API_KEY_HERE` with the API key from Step 1
+Replace:
+- `PASTE_YOUR_PATH_HERE` with the path from Step 2 (e.g., `/Users/yourname/Fathom_MCP`)
+- `PASTE_YOUR_API_KEY_HERE` with your Fathom API key from Step 1
 
 If the file already had other `mcpServers` entries, add the `"fathom": { ... }` block inside the existing `mcpServers` object (don't replace the whole file).
 
@@ -157,19 +233,7 @@ Save the file.
 <details>
 <summary><strong>Claude Code (the terminal/CLI tool)</strong></summary>
 
-Open your terminal and run this command to edit the settings file:
-
-**Mac/Linux:**
-```bash
-open ~/.claude.json
-```
-
-**Windows:**
-```bash
-notepad %USERPROFILE%\.claude.json
-```
-
-If the file is empty or doesn't exist, paste this entire block:
+Open `~/.claude.json` in any text editor and add:
 
 ```json
 {
@@ -185,20 +249,18 @@ If the file is empty or doesn't exist, paste this entire block:
 }
 ```
 
-**Important — replace two things:**
-- Replace `PASTE_YOUR_PATH_HERE` with the path from Step 2 (e.g., `/Users/yourname/Fathom_MCP`)
-- Replace `PASTE_YOUR_API_KEY_HERE` with the API key from Step 1
+Replace:
+- `PASTE_YOUR_PATH_HERE` with the path from Step 2 (e.g., `/Users/yourname/Fathom_MCP`)
+- `PASTE_YOUR_API_KEY_HERE` with your Fathom API key from Step 1
 
 Save the file.
 
 </details>
 
----
-
 ### Step 4: Restart Claude
 
 - **Claude Desktop:** Fully quit the app (not just close the window) and reopen it
-- **Claude Code:** Close the terminal and open a new one, then start Claude Code again
+- **Claude Code:** Close the terminal, open a new one, and start Claude Code again
 
 That's it. You're done.
 
@@ -212,39 +274,79 @@ Start a conversation with Claude and ask something like:
 - *"Get the transcript from my last meeting"*
 - *"Summarize yesterday's standup"*
 - *"List all my team members"*
+- *"Set up a webhook to notify me when meetings are processed"*
+
+---
+
+## Hosting Your Own Server (for sharing with others)
+
+If you want to host this so friends or teammates can use it without installing anything, you can deploy the remote server to Railway, Render, Fly.io, or any platform that runs Docker.
+
+### Deploy to Railway
+
+1. Fork this repo on GitHub
+2. Go to [railway.app](https://railway.app) and create a new project
+3. Choose **Deploy from GitHub repo** and select your fork
+4. Railway will auto-detect the Dockerfile and deploy
+
+That's it. Railway gives you a public URL like `https://fathom-mcp-production-xxxx.up.railway.app`. Share that URL with your friends — they follow **Option A** above using that URL.
+
+Each person brings their own Fathom API key. The server never stores keys — it only uses them for the duration of each session.
+
+### Deploy Anywhere with Docker
+
+```bash
+# Build
+npm run build
+docker build -t fathom-mcp .
+
+# Run
+docker run -p 3000:3000 fathom-mcp
+```
+
+The server listens on port 3000 (configurable via `PORT` environment variable). No server-side API key needed — each user passes their own key via the `x-fathom-api-key` header.
 
 ---
 
 ## Something Not Working?
 
 **Claude says "FATHOM_API_KEY environment variable is required"**
-> The API key isn't getting passed to the server. Open your config file from Step 3 and make sure your API key is between the quotes after `FATHOM_API_KEY`.
+> The API key isn't getting passed to the server. Open your config file and make sure your API key is between the quotes after `FATHOM_API_KEY`.
 
 **Claude says "Fathom API error: 401 Unauthorized"**
 > Your API key is wrong or expired. Go back to Fathom (Settings > Integrations > API), generate a new key, paste it into your config file, and restart Claude.
 
+**Claude says "Missing Fathom API key"** (remote/hosted mode)
+> Your config is missing the `x-fathom-api-key` header. Make sure your config includes the `headers` block with your API key.
+
 **The Fathom tools don't show up at all**
 > Three things to check:
-> 1. Did you run `npm run build` in Step 2? (Go back to your terminal, `cd` into the Fathom_MCP folder, and run `npm run build`)
-> 2. Is the path in your config file correct? It should end with `/dist/index.js`
+> 1. **Local mode:** Did you run `npm run build`? Is the path correct and ending with `/dist/index.js`?
+> 2. **Remote mode:** Is the URL correct and ending with `/mcp`?
 > 3. Did you restart Claude after saving the config file?
 
 **"node: command not found" or similar**
-> Node.js isn't installed. Go back to the Prerequisites section above.
+> Node.js isn't installed. Go back to the Prerequisites section in Option B.
 
 ---
 
 ## For Developers
 
 ```bash
-# Run in dev mode (auto-reloads, no build step)
+# Local stdio mode (for Claude Desktop / Claude Code)
 FATHOM_API_KEY=your-key npm run dev
+
+# Remote HTTP mode (for hosting)
+npm run dev:remote
 
 # Build for production
 npm run build
 
-# Run the production build
+# Run local production build
 FATHOM_API_KEY=your-key npm start
+
+# Run remote production build
+npm run start:remote
 ```
 
 ## License
