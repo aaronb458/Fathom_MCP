@@ -1,4 +1,4 @@
-import { FathomError } from "./types.js";
+import { FathomError, Meeting, PaginatedResponse } from "./types.js";
 
 const BASE_URL = "https://api.fathom.ai/external/v1";
 
@@ -131,5 +131,36 @@ export class FathomClient {
 
   async deleteWebhook(webhookId: string) {
     return this.request("DELETE", `/webhooks/${webhookId}`);
+  }
+
+  /**
+   * Fetch ALL meetings in a date range, auto-paginating through all pages.
+   * Always includes summaries and action items (small payloads).
+   */
+  async listAllMeetings(params: {
+    created_after?: string;
+    created_before?: string;
+    "recorded_by[]"?: string[];
+    "teams[]"?: string[];
+    include_summary?: boolean;
+    include_action_items?: boolean;
+  }): Promise<Meeting[]> {
+    const all: Meeting[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const page = await this.request<PaginatedResponse<Meeting>>(
+        "GET",
+        "/meetings",
+        {
+          ...params,
+          cursor,
+        } as Record<string, string | string[] | boolean | undefined>
+      );
+      all.push(...page.results);
+      cursor = page.has_more ? page.cursor : undefined;
+    } while (cursor);
+
+    return all;
   }
 }

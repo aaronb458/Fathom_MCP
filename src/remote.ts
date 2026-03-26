@@ -4,7 +4,10 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { FathomClient } from "./api.js";
+import { MeetingCache } from "./cache.js";
+import { EmbeddingStore } from "./embeddings.js";
 import { registerTools } from "./tools.js";
+import { registerPrompts } from "./prompts.js";
 
 const app = express();
 app.use(express.json());
@@ -24,9 +27,21 @@ function getApiKey(req: express.Request): string | undefined {
   );
 }
 
+/**
+ * Extract optional OpenAI API key for semantic search.
+ * Accepts: x-openai-api-key header OR ?openai_api_key= query param.
+ */
+function getOpenAIKey(req: express.Request): string | undefined {
+  return (
+    (req.headers["x-openai-api-key"] as string) ||
+    (req.query.openai_api_key as string) ||
+    undefined
+  );
+}
+
 // Health check
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", server: "fathom-mcp", version: "1.0.0" });
+  res.json({ status: "ok", server: "fathom-mcp", version: "2.0.0" });
 });
 
 // Handle POST /mcp — initialize new sessions and handle tool calls
@@ -55,7 +70,9 @@ app.post("/mcp", async (req, res) => {
       return;
     }
 
-    // Create a per-session transport with onsessioninitialized callback
+    const openaiKey = getOpenAIKey(req);
+
+    // Create a per-session transport
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
@@ -65,12 +82,17 @@ app.post("/mcp", async (req, res) => {
     });
 
     const server = new Server(
-      { name: "fathom-mcp", version: "1.0.0" },
-      { capabilities: { tools: {} } }
+      { name: "fathom-mcp", version: "2.0.0" },
+      { capabilities: { tools: {}, prompts: {} } }
     );
 
+    // Per-session: client, cache, embeddings
     const client = new FathomClient(apiKey);
-    registerTools(server, client);
+    const cache = new MeetingCache(client);
+    const embeddings = new EmbeddingStore(openaiKey);
+
+    registerTools(server, client, cache, embeddings);
+    registerPrompts(server, cache, embeddings);
 
     // Clean up session on close
     transport.onclose = () => {
@@ -119,5 +141,6 @@ app.delete("/mcp", async (req, res) => {
 const port = parseInt(process.env.PORT || "3000", 10);
 app.listen(port, "0.0.0.0", () => {
   console.error(`Fathom MCP remote server listening on port ${port}`);
-  console.error("Clients must pass their Fathom API key via x-fathom-api-key header");
+  console.error("Pass Fathom API key via x-fathom-api-key header (required)");
+  console.error("Pass OpenAI API key via x-openai-api-key header (optional, enables semantic search)");
 });

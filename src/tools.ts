@@ -4,14 +4,109 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { FathomClient } from "./api.js";
+import { MeetingCache } from "./cache.js";
+import { EmbeddingStore } from "./embeddings.js";
+import { keywordSearch, buildDigest, extractActionItems } from "./search.js";
 
-export function registerTools(server: Server, client: FathomClient) {
+export function registerTools(
+  server: Server,
+  client: FathomClient,
+  cache: MeetingCache,
+  embeddings: EmbeddingStore
+) {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      // --- Smart tools (new) ---
+      {
+        name: "fathom_search_meetings",
+        description:
+          "Search across your Fathom meetings by topic, keyword, or question. Uses semantic search (if OpenAI key provided) or keyword search on meeting summaries, titles, and action items. Use this when the user asks about a topic, decision, or keyword across meetings. Returns compressed results with relevant excerpts. For a full meeting deep-dive, use fathom_get_meeting_detail with the returned meeting_id.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            query: {
+              type: "string",
+              description: "What to search for (topic, keyword, question, person name, etc.)",
+            },
+            days_back: {
+              type: "number",
+              description: "How many days back to search (default: 30)",
+            },
+            search_transcripts: {
+              type: "boolean",
+              description:
+                "Also search full transcripts, not just summaries. Slower but more thorough. Only set true if summary search finds nothing relevant.",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "fathom_meeting_digest",
+        description:
+          "Get a compressed overview of meetings in a date range. Returns a token-efficient digest with title, date, duration, attendees, top summary bullets, and action items for each meeting (~200-500 tokens per meeting). Use this for 'what happened this week?' type questions. For deeper detail on a specific meeting, use fathom_get_meeting_detail.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            days_back: {
+              type: "number",
+              description: "How many days back to include (default: 7)",
+            },
+            team: {
+              type: "string",
+              description: "Filter by team ID (optional)",
+            },
+            recorded_by: {
+              type: "string",
+              description: "Filter by recorder user ID (optional)",
+            },
+          },
+        },
+      },
+      {
+        name: "fathom_get_meeting_detail",
+        description:
+          "Get full detail for one specific meeting — summary, action items, and optionally the complete transcript. Use this after finding a meeting via search or digest to get the full picture. Only request the transcript when the user needs exact quotes or word-for-word content.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            meeting_id: {
+              type: "string",
+              description: "The meeting ID (from search results, digest, or list_meetings)",
+            },
+            include_transcript: {
+              type: "boolean",
+              description:
+                "Include the full transcript (default: true). Set to false if you only need the summary.",
+            },
+          },
+          required: ["meeting_id"],
+        },
+      },
+      {
+        name: "fathom_action_items",
+        description:
+          "Extract action items across all meetings in a date range, grouped by meeting. Optionally filter by assignee name. Use this when users ask about to-dos, follow-ups, who owes what, or assigned tasks.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            days_back: {
+              type: "number",
+              description: "How many days back to include (default: 7)",
+            },
+            assignee: {
+              type: "string",
+              description: "Filter by assignee name (partial match, case-insensitive)",
+            },
+          },
+        },
+      },
+
+      // --- Original tools (kept) ---
       {
         name: "fathom_list_meetings",
         description:
-          "List meetings from Fathom AI. Supports filtering by date range, recorder, team, and invitee domains. Can optionally include transcript, summary, action items, and CRM matches inline.",
+          "Browse meetings by date, team, recorder, or invitee domain. Returns metadata and summaries but NOT transcripts. Use this when the user wants to browse or filter their meeting list. For topic-based search, use fathom_search_meetings instead. For full detail on one meeting, use fathom_get_meeting_detail.",
         inputSchema: {
           type: "object" as const,
           properties: {
@@ -42,53 +137,20 @@ export function registerTools(server: Server, client: FathomClient) {
               type: "string",
               description: "Pagination cursor from a previous response",
             },
-            include_transcript: {
-              type: "boolean",
-              description: "Include full transcript in each meeting",
-            },
-            include_summary: {
-              type: "boolean",
-              description: "Include summary in each meeting",
-            },
-            include_action_items: {
-              type: "boolean",
-              description: "Include action items in each meeting",
-            },
-            include_crm_matches: {
-              type: "boolean",
-              description: "Include CRM matches in each meeting",
-            },
           },
         },
       },
       {
-        name: "fathom_get_summary",
-        description:
-          "Get the AI-generated summary for a specific Fathom recording. Returns structured sections with bullet points.",
+        name: "fathom_list_teams",
+        description: "List all teams in your Fathom workspace.",
         inputSchema: {
           type: "object" as const,
           properties: {
-            recording_id: {
+            cursor: {
               type: "string",
-              description: "The recording/meeting ID",
+              description: "Pagination cursor from a previous response",
             },
           },
-          required: ["recording_id"],
-        },
-      },
-      {
-        name: "fathom_get_transcript",
-        description:
-          "Get the full transcript for a specific Fathom recording. Returns timestamped speaker turns.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            recording_id: {
-              type: "string",
-              description: "The recording/meeting ID",
-            },
-          },
-          required: ["recording_id"],
         },
       },
       {
@@ -102,19 +164,6 @@ export function registerTools(server: Server, client: FathomClient) {
               type: "string",
               description: "Filter by team ID",
             },
-            cursor: {
-              type: "string",
-              description: "Pagination cursor from a previous response",
-            },
-          },
-        },
-      },
-      {
-        name: "fathom_list_teams",
-        description: "List all teams in your Fathom workspace.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
             cursor: {
               type: "string",
               description: "Pagination cursor from a previous response",
@@ -181,6 +230,125 @@ export function registerTools(server: Server, client: FathomClient) {
 
     try {
       switch (name) {
+        // --- Smart tools ---
+
+        case "fathom_search_meetings": {
+          const query = args!.query as string;
+          const daysBack = (args?.days_back as number) || 30;
+          const searchTranscripts = args?.search_transcripts === true;
+
+          const meetings = await cache.getForRange(daysBack);
+
+          // Index meetings for semantic search if available
+          if (embeddings.isAvailable()) {
+            await embeddings.addMeetings(meetings);
+
+            // If searching transcripts, load them first
+            if (searchTranscripts) {
+              for (const m of meetings) {
+                if (!m.transcript) {
+                  await cache.getMeetingDetail(m.id, true);
+                }
+              }
+              const updated = await cache.getForRange(daysBack);
+              await embeddings.addMeetings(updated);
+            }
+
+            const results = await embeddings.search(query);
+            if (results.length > 0) {
+              return {
+                content: [{
+                  type: "text",
+                  text: JSON.stringify({
+                    search_mode: "semantic",
+                    query,
+                    results_count: results.length,
+                    results,
+                  }, null, 2),
+                }],
+              };
+            }
+          }
+
+          // Fallback to keyword search
+          const results = keywordSearch(meetings, query, searchTranscripts);
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                search_mode: embeddings.isAvailable() ? "semantic (no results, showing keyword fallback)" : "keyword",
+                query,
+                results_count: results.length,
+                results,
+              }, null, 2),
+            }],
+          };
+        }
+
+        case "fathom_meeting_digest": {
+          const daysBack = (args?.days_back as number) || 7;
+          const meetings = await cache.getForRange(daysBack);
+
+          // TODO: filter by team/recorded_by if provided (requires matching IDs from cached data)
+          const digest = buildDigest(meetings);
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                period: `Last ${daysBack} days`,
+                total_meetings: digest.length,
+                meetings: digest,
+              }, null, 2),
+            }],
+          };
+        }
+
+        case "fathom_get_meeting_detail": {
+          const meetingId = args!.meeting_id as string;
+          const includeTranscript = args?.include_transcript !== false;
+
+          const meeting = await cache.getMeetingDetail(meetingId, includeTranscript);
+          if (!meeting) {
+            return {
+              content: [{ type: "text", text: `Meeting not found: ${meetingId}` }],
+              isError: true,
+            };
+          }
+
+          // Index for future semantic search
+          if (embeddings.isAvailable()) {
+            await embeddings.addMeeting(meeting);
+          }
+
+          return {
+            content: [{ type: "text", text: JSON.stringify(meeting, null, 2) }],
+          };
+        }
+
+        case "fathom_action_items": {
+          const daysBack = (args?.days_back as number) || 7;
+          const assignee = args?.assignee as string | undefined;
+
+          const meetings = await cache.getForRange(daysBack);
+          const groups = extractActionItems(meetings, assignee);
+
+          const totalItems = groups.reduce((sum, g) => sum + g.items.length, 0);
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                period: `Last ${daysBack} days`,
+                filter: assignee ? `Assignee: ${assignee}` : "All assignees",
+                total_action_items: totalItems,
+                meetings_with_items: groups.length,
+                groups,
+              }, null, 2),
+            }],
+          };
+        }
+
+        // --- Original tools ---
+
         case "fathom_list_meetings": {
           const params: Record<string, string | string[] | boolean | undefined> = {};
           if (args?.created_after) params.created_after = args.created_after as string;
@@ -190,35 +358,24 @@ export function registerTools(server: Server, client: FathomClient) {
           if (args?.calendar_invitees_domains)
             params["calendar_invitees_domains[]"] = args.calendar_invitees_domains as string[];
           if (args?.cursor) params.cursor = args.cursor as string;
-          if (args?.include_transcript) params.include_transcript = true;
-          if (args?.include_summary) params.include_summary = true;
-          if (args?.include_action_items) params.include_action_items = true;
-          if (args?.include_crm_matches) params.include_crm_matches = true;
+          // Always include summaries and action items, never bulk transcripts
+          params.include_summary = true;
+          params.include_action_items = true;
 
           const result = await client.listMeetings(params);
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
 
-        case "fathom_get_summary": {
-          const result = await client.getSummary(args!.recording_id as string);
-          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-        }
-
-        case "fathom_get_transcript": {
-          const result = await client.getTranscript(args!.recording_id as string);
+        case "fathom_list_teams": {
+          const result = await client.listTeams({
+            cursor: args?.cursor as string | undefined,
+          });
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
         }
 
         case "fathom_list_team_members": {
           const result = await client.listTeamMembers({
             team: args?.team as string | undefined,
-            cursor: args?.cursor as string | undefined,
-          });
-          return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-        }
-
-        case "fathom_list_teams": {
-          const result = await client.listTeams({
             cursor: args?.cursor as string | undefined,
           });
           return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -232,12 +389,10 @@ export function registerTools(server: Server, client: FathomClient) {
 
           if (!includeTranscript && !includeSummary && !includeActionItems && !includeCrmMatches) {
             return {
-              content: [
-                {
-                  type: "text",
-                  text: "Error: At least one include_* flag must be true (include_transcript, include_summary, include_action_items, or include_crm_matches).",
-                },
-              ],
+              content: [{
+                type: "text",
+                text: "Error: At least one include_* flag must be true (include_transcript, include_summary, include_action_items, or include_crm_matches).",
+              }],
               isError: true,
             };
           }
