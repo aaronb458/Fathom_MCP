@@ -78,12 +78,12 @@ export function keywordSearch(
 
     // Search action items
     for (const item of meeting.action_items || []) {
-      if (!item?.text) continue;
-      const itemLower = item.text.toLowerCase();
+      if (!item?.description) continue;
+      const itemLower = item.description.toLowerCase();
       const itemScore = terms.filter((t) => itemLower.includes(t)).length;
       if (itemScore > 0) {
         matches.push({
-          text: item.assignee ? `[${item.assignee}] ${item.text}` : item.text,
+          text: item.assignee ? `[${item.assignee.name}] ${item.description}` : item.description,
           type: "action_item",
           score: itemScore,
         });
@@ -143,7 +143,7 @@ export function buildDigest(meetings: Meeting[]): MeetingDigest[] {
         ? summaryPreview(m.default_summary.markdown_formatted)
         : "(no summary)",
       action_items: (m.action_items || []).map((a) =>
-        a.assignee ? `[${a.assignee}] ${a.text}` : a.text
+        a.assignee ? `[${a.assignee.name}] ${a.description}` : a.description
       ),
       url: m.url,
     }));
@@ -165,7 +165,7 @@ export function extractActionItems(
       let items = m.action_items || [];
       if (filterLower) {
         items = items.filter(
-          (a) => a.assignee && a.assignee.toLowerCase().includes(filterLower)
+          (a) => a.assignee?.name && a.assignee.name.toLowerCase().includes(filterLower)
         );
       }
       return {

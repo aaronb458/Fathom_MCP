@@ -182,8 +182,8 @@ function chunkMeeting(meeting: Meeting): MeetingChunk[] {
   // Action items
   for (const item of meeting.action_items) {
     const text = item.assignee
-      ? `Action item for ${item.assignee}: ${item.text}`
-      : `Action item: ${item.text}`;
+      ? `Action item for ${item.assignee.name}: ${item.description}`
+      : `Action item: ${item.description}`;
     chunks.push({ ...base, chunk_type: "action_item", text });
   }
 

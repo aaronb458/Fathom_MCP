@@ -36,8 +36,18 @@ export interface TranscriptEntry {
 }
 
 export interface ActionItem {
-  text: string;
-  assignee?: string;
+  description: string;
+  user_generated: boolean;
+  completed: boolean;
+  recording_timestamp: string;
+  recording_playback_url: string;
+  assignee: ActionItemAssignee | null;
+}
+
+export interface ActionItemAssignee {
+  name: string;
+  email: string | null;
+  team: string | null;
 }
 
 export interface CalendarInvitee {
