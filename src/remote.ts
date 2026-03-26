@@ -23,6 +23,7 @@ function getApiKey(req: express.Request): string | undefined {
   return (
     (req.headers["x-fathom-api-key"] as string) ||
     (req.query.fathom_api_key as string) ||
+    process.env.FATHOM_API_KEY ||
     undefined
   );
 }
@@ -35,6 +36,7 @@ function getOpenAIKey(req: express.Request): string | undefined {
   return (
     (req.headers["x-openai-api-key"] as string) ||
     (req.query.openai_api_key as string) ||
+    process.env.OPENAI_API_KEY ||
     undefined
   );
 }
