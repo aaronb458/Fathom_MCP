@@ -6,40 +6,56 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { FathomClient } from "./api.js";
 import { MeetingCache } from "./cache.js";
 import { EmbeddingStore } from "./embeddings.js";
+import { FathomDB } from "./db.js";
 import { registerTools } from "./tools.js";
 import { registerPrompts } from "./prompts.js";
+import { createWebhookHandler, backfillMeetings } from "./webhook.js";
 
 const app = express();
-app.use(express.json());
 
 // Store active transports by session ID
 const transports: Record<string, StreamableHTTPServerTransport> = {};
 
+// Shared DB instance (persists across sessions)
+const db = new FathomDB();
+
+// Server-level API keys (from env)
+const defaultFathomKey = process.env.FATHOM_API_KEY;
+const defaultOpenAIKey = process.env.OPENAI_API_KEY; // for embeddings/semantic search
+const defaultRouterKey = process.env.OPENROUTER_API_KEY; // for AI extraction
+
 /**
- * Extract the Fathom API key from the request.
- * Accepts: x-fathom-api-key header OR ?fathom_api_key= query param.
+ * Extract the Fathom API key from the request, falling back to env var.
  */
 function getApiKey(req: express.Request): string | undefined {
   return (
     (req.headers["x-fathom-api-key"] as string) ||
     (req.query.fathom_api_key as string) ||
-    process.env.FATHOM_API_KEY ||
+    defaultFathomKey ||
     undefined
   );
 }
 
-/**
- * Extract optional OpenAI API key for semantic search.
- * Accepts: x-openai-api-key header OR ?openai_api_key= query param.
- */
 function getOpenAIKey(req: express.Request): string | undefined {
   return (
     (req.headers["x-openai-api-key"] as string) ||
     (req.query.openai_api_key as string) ||
-    process.env.OPENAI_API_KEY ||
+    defaultOpenAIKey ||
     undefined
   );
 }
+
+// --- Webhook endpoint (raw body for signature verification) ---
+// Must be BEFORE express.json() middleware
+if (defaultFathomKey) {
+  const client = new FathomClient(defaultFathomKey);
+  const webhookHandler = createWebhookHandler(db, client, defaultRouterKey);
+
+  app.post("/webhook", express.raw({ type: "*/*" }), webhookHandler);
+}
+
+// JSON parsing for MCP routes
+app.use(express.json());
 
 // Health check
 app.get("/health", (_req, res) => {
@@ -65,7 +81,7 @@ app.post("/mcp", async (req, res) => {
         error: {
           code: -32001,
           message:
-            "Missing Fathom API key. Pass it as an x-fathom-api-key header or ?fathom_api_key= query parameter.",
+            "Missing Fathom API key. Pass it as an x-fathom-api-key header or set FATHOM_API_KEY env var.",
         },
         id: (req.body as { id?: unknown }).id ?? null,
       });
@@ -88,15 +104,14 @@ app.post("/mcp", async (req, res) => {
       { capabilities: { tools: {}, prompts: {} } }
     );
 
-    // Per-session: client, cache, embeddings
+    // Per-session: client, cache, embeddings. Shared: db
     const client = new FathomClient(apiKey);
     const cache = new MeetingCache(client);
     const embeddings = new EmbeddingStore(openaiKey);
 
-    registerTools(server, client, cache, embeddings);
+    registerTools(server, client, cache, embeddings, db);
     registerPrompts(server, cache, embeddings);
 
-    // Clean up session on close
     transport.onclose = () => {
       if (transport.sessionId) {
         delete transports[transport.sessionId];
@@ -108,7 +123,6 @@ app.post("/mcp", async (req, res) => {
     return;
   }
 
-  // Invalid request
   res.status(400).json({
     jsonrpc: "2.0",
     error: {
@@ -140,9 +154,35 @@ app.delete("/mcp", async (req, res) => {
   }
 });
 
+// --- Start server + backfill ---
 const port = parseInt(process.env.PORT || "3000", 10);
-app.listen(port, "0.0.0.0", () => {
+app.listen(port, "0.0.0.0", async () => {
   console.error(`Fathom MCP remote server listening on port ${port}`);
-  console.error("Pass Fathom API key via x-fathom-api-key header (required)");
-  console.error("Pass OpenAI API key via x-openai-api-key header (optional, enables semantic search)");
+  console.error(`Webhook endpoint: POST /webhook`);
+
+  if (defaultFathomKey) {
+    console.error("Fathom API key: configured");
+
+    // Backfill on first boot
+    const client = new FathomClient(defaultFathomKey);
+    try {
+      await backfillMeetings(db, client, defaultRouterKey);
+    } catch (error) {
+      console.error("[startup] Backfill failed:", error instanceof Error ? error.message : error);
+    }
+  } else {
+    console.error("Fathom API key: not set (per-request keys required)");
+  }
+
+  if (defaultOpenAIKey) {
+    console.error("OpenAI key: configured (semantic search enabled)");
+  } else {
+    console.error("OpenAI key: not set (keyword search only)");
+  }
+
+  if (defaultRouterKey) {
+    console.error("OpenRouter key: configured (AI extraction enabled)");
+  } else {
+    console.error("OpenRouter key: not set (no AI action item extraction)");
+  }
 });

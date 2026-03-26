@@ -113,6 +113,15 @@ export interface FathomError {
   rateLimitReset?: number;
 }
 
+// --- Extraction types ---
+
+export interface ExtractedItem {
+  type: "action_item" | "decision" | "follow_up";
+  description: string;
+  assignee: string | null;
+  priority: "high" | "medium" | "low";
+}
+
 // --- Smart layer types ---
 
 export interface MeetingDigest {

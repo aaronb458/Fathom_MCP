@@ -6,17 +6,57 @@ import {
 import { FathomClient } from "./api.js";
 import { MeetingCache } from "./cache.js";
 import { EmbeddingStore } from "./embeddings.js";
+import { FathomDB } from "./db.js";
 import { keywordSearch, buildDigest, extractActionItems } from "./search.js";
 
 export function registerTools(
   server: Server,
   client: FathomClient,
   cache: MeetingCache,
-  embeddings: EmbeddingStore
+  embeddings: EmbeddingStore,
+  db?: FathomDB
 ) {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
-      // --- Smart tools (new) ---
+      // --- Persistent / AI-powered tools ---
+      {
+        name: "fathom_smart_action_items",
+        description:
+          "Get AI-extracted action items, decisions, and follow-ups from your meetings. These are generated automatically after each call using AI analysis of the full transcript — more thorough than Fathom's built-in extraction. Use this when users ask about tasks, to-dos, what was decided, or what needs follow-up.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            days_back: {
+              type: "number",
+              description: "How many days back to include (default: 7)",
+            },
+            assignee: {
+              type: "string",
+              description: "Filter by assignee name (partial match, case-insensitive)",
+            },
+            type: {
+              type: "string",
+              enum: ["action_item", "decision", "follow_up"],
+              description: "Filter by item type (default: all types)",
+            },
+          },
+        },
+      },
+      {
+        name: "fathom_weekly_briefing",
+        description:
+          "Get your Monday morning briefing ��� all meetings from the past week with AI-extracted action items, decisions, and follow-ups organized and ready to review. Use this when users ask 'what do I need to do this week?' or 'catch me up on last week'.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            days_back: {
+              type: "number",
+              description: "How many days to cover (default: 7)",
+            },
+          },
+        },
+      },
+      // --- Smart search/digest tools ---
       {
         name: "fathom_search_meetings",
         description:
@@ -230,7 +270,68 @@ export function registerTools(
 
     try {
       switch (name) {
-        // --- Smart tools ---
+        // --- Persistent / AI-powered tools ---
+
+        case "fathom_smart_action_items": {
+          if (!db) {
+            return { content: [{ type: "text", text: "Error: Persistent storage not available. Deploy to Railway or run the remote server for this feature." }], isError: true };
+          }
+          const daysBack = (args?.days_back as number) || 7;
+          const assignee = args?.assignee as string | undefined;
+          const itemType = args?.type as string | undefined;
+
+          const groups = db.getExtractedItems({ daysBack, assignee, type: itemType });
+          const totalItems = groups.reduce((sum, g) => sum + g.items.length, 0);
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                period: `Last ${daysBack} days`,
+                filter: [
+                  assignee ? `Assignee: ${assignee}` : null,
+                  itemType ? `Type: ${itemType}` : null,
+                ].filter(Boolean).join(", ") || "All items",
+                total_items: totalItems,
+                meetings_count: groups.length,
+                groups,
+              }, null, 2),
+            }],
+          };
+        }
+
+        case "fathom_weekly_briefing": {
+          if (!db) {
+            return { content: [{ type: "text", text: "Error: Persistent storage not available. Deploy to Railway or run the remote server for this feature." }], isError: true };
+          }
+          const daysBack = (args?.days_back as number) || 7;
+          const briefing = db.getWeeklyBriefing(daysBack);
+
+          const now = new Date();
+          const start = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
+          const period = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                period,
+                meetings_count: briefing.meetings.length,
+                meetings: briefing.meetings,
+                your_action_items: briefing.action_items,
+                team_decisions: briefing.decisions,
+                follow_ups_needed: briefing.follow_ups,
+                totals: {
+                  action_items: briefing.action_items.length,
+                  decisions: briefing.decisions.length,
+                  follow_ups: briefing.follow_ups.length,
+                },
+              }, null, 2),
+            }],
+          };
+        }
+
+        // --- Smart search/digest tools ---
 
         case "fathom_search_meetings": {
           const query = args!.query as string;
