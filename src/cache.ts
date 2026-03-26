@@ -1,16 +1,16 @@
-import { Meeting, PaginatedResponse } from "./types.js";
+import { Meeting, TranscriptResponse } from "./types.js";
 import { FathomClient } from "./api.js";
 
 interface DateRange {
-  after: string; // ISO 8601
-  before: string; // ISO 8601
-  fetchedAt: number; // Date.now()
+  after: string;
+  before: string;
+  fetchedAt: number;
 }
 
 const TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export class MeetingCache {
-  private meetings: Map<string, Meeting> = new Map();
+  private meetings: Map<number, Meeting> = new Map(); // keyed by recording_id
   private fetchedRanges: DateRange[] = [];
   private client: FathomClient;
 
@@ -20,7 +20,6 @@ export class MeetingCache {
 
   /**
    * Get meetings for a date range. Fetches from API if not cached or stale.
-   * Always includes summaries and action items. Never bulk-fetches transcripts.
    */
   async getForRange(daysBack: number): Promise<Meeting[]> {
     const now = new Date();
@@ -37,32 +36,37 @@ export class MeetingCache {
   /**
    * Get a single meeting with full detail (transcript loaded on demand).
    */
-  async getMeetingDetail(meetingId: string, includeTranscript: boolean): Promise<Meeting | null> {
-    let meeting = this.meetings.get(meetingId);
+  async getMeetingDetail(recordingId: number, includeTranscript: boolean): Promise<Meeting | null> {
+    let meeting = this.meetings.get(recordingId);
 
-    // If not cached at all, try to fetch recent meetings
+    // If not cached, try fetching recent meetings
     if (!meeting) {
       await this.fetchRange(
         new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
         new Date().toISOString()
       );
-      meeting = this.meetings.get(meetingId);
+      meeting = this.meetings.get(recordingId);
     }
 
     if (!meeting) return null;
 
     // Lazy-load transcript if requested and not already cached
     if (includeTranscript && !meeting.transcript) {
-      const transcript = await this.client.getTranscript(meetingId);
-      meeting.transcript = (transcript as { entries: Meeting["transcript"] }).entries ?? transcript as unknown as Meeting["transcript"];
-      this.meetings.set(meetingId, meeting);
+      try {
+        const response = await this.client.getTranscript(recordingId);
+        meeting.transcript = (response as TranscriptResponse).transcript ?? [];
+        this.meetings.set(recordingId, meeting);
+      } catch {
+        // Transcript may not be available — don't crash
+        meeting.transcript = [];
+      }
     }
 
     return meeting;
   }
 
   /**
-   * Get all cached meetings (for search across everything loaded so far).
+   * Get all cached meetings.
    */
   getAllCached(): Meeting[] {
     return Array.from(this.meetings.values());
@@ -100,18 +104,14 @@ export class MeetingCache {
     });
 
     for (const meeting of allMeetings) {
-      // Merge: preserve any transcript we already loaded
-      const existing = this.meetings.get(meeting.id);
+      // Preserve any transcript we already loaded
+      const existing = this.meetings.get(meeting.recording_id);
       if (existing?.transcript && !meeting.transcript) {
         meeting.transcript = existing.transcript;
       }
-      this.meetings.set(meeting.id, meeting);
+      this.meetings.set(meeting.recording_id, meeting);
     }
 
-    this.fetchedRanges.push({
-      after,
-      before,
-      fetchedAt: Date.now(),
-    });
+    this.fetchedRanges.push({ after, before, fetchedAt: Date.now() });
   }
 }

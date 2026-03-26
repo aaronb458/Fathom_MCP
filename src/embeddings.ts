@@ -8,7 +8,7 @@ import { Meeting, MeetingChunk, EmbeddedChunk, SearchResult } from "./types.js";
 export class EmbeddingStore {
   private openai: OpenAI | null = null;
   private chunks: EmbeddedChunk[] = [];
-  private indexedMeetings: Set<string> = new Set();
+  private indexedMeetings: Set<number> = new Set();
 
   constructor(openaiApiKey?: string) {
     if (openaiApiKey) {
@@ -16,38 +16,33 @@ export class EmbeddingStore {
     }
   }
 
-  /** Returns true if OpenAI embeddings are available. */
   isAvailable(): boolean {
     return this.openai !== null;
   }
 
-  /** Check if a meeting has already been indexed. */
-  isIndexed(meetingId: string): boolean {
-    return this.indexedMeetings.has(meetingId);
+  isIndexed(recordingId: number): boolean {
+    return this.indexedMeetings.has(recordingId);
   }
 
-  /**
-   * Chunk a meeting into searchable pieces, embed them, and store.
-   * Skips if already indexed.
-   */
   async addMeeting(meeting: Meeting): Promise<void> {
-    if (!this.openai || this.indexedMeetings.has(meeting.id)) return;
+    if (!this.openai || this.indexedMeetings.has(meeting.recording_id)) return;
 
     const chunks = chunkMeeting(meeting);
     if (chunks.length === 0) return;
 
-    const embedded = await this.embedChunks(chunks);
-    this.chunks.push(...embedded);
-    this.indexedMeetings.add(meeting.id);
+    try {
+      const embedded = await this.embedChunks(chunks);
+      this.chunks.push(...embedded);
+      this.indexedMeetings.add(meeting.recording_id);
+    } catch {
+      // OpenAI call failed — don't crash, just skip indexing
+    }
   }
 
-  /**
-   * Add multiple meetings. Chunks and embeds in batches for efficiency.
-   */
   async addMeetings(meetings: Meeting[]): Promise<void> {
     if (!this.openai) return;
 
-    const newMeetings = meetings.filter((m) => !this.indexedMeetings.has(m.id));
+    const newMeetings = meetings.filter((m) => !this.indexedMeetings.has(m.recording_id));
     if (newMeetings.length === 0) return;
 
     const allChunks: MeetingChunk[] = [];
@@ -57,23 +52,27 @@ export class EmbeddingStore {
 
     if (allChunks.length === 0) return;
 
-    const embedded = await this.embedChunks(allChunks);
-    this.chunks.push(...embedded);
-    for (const meeting of newMeetings) {
-      this.indexedMeetings.add(meeting.id);
+    try {
+      const embedded = await this.embedChunks(allChunks);
+      this.chunks.push(...embedded);
+      for (const meeting of newMeetings) {
+        this.indexedMeetings.add(meeting.recording_id);
+      }
+    } catch {
+      // OpenAI call failed — graceful degradation, keyword search will be used
     }
   }
 
-  /**
-   * Semantic search across all indexed chunks.
-   * Returns top K results with source meeting info and matching text.
-   */
   async search(query: string, topK = 10): Promise<SearchResult[]> {
     if (!this.openai || this.chunks.length === 0) return [];
 
-    const queryEmbedding = await this.embed(query);
+    let queryEmbedding: number[];
+    try {
+      queryEmbedding = await this.embed(query);
+    } catch {
+      return []; // OpenAI failed — caller should fall back to keyword search
+    }
 
-    // Score all chunks by cosine similarity
     const scored = this.chunks.map((chunk) => ({
       chunk,
       score: cosineSimilarity(queryEmbedding, chunk.embedding),
@@ -88,17 +87,16 @@ export class EmbeddingStore {
     for (const { chunk, score } of scored) {
       if (results.length >= topK) break;
 
-      const key = `${chunk.meeting_id}:${chunk.chunk_type}`;
+      const key = `${chunk.recording_id}:${chunk.chunk_type}`;
       if (seen.has(key)) continue;
       seen.add(key);
 
-      // Find all matching chunks from this meeting for excerpts
       const meetingChunks = scored
-        .filter((s) => s.chunk.meeting_id === chunk.meeting_id)
+        .filter((s) => s.chunk.recording_id === chunk.recording_id)
         .slice(0, 3);
 
       results.push({
-        meeting_id: chunk.meeting_id,
+        recording_id: chunk.recording_id,
         meeting_title: chunk.meeting_title,
         meeting_date: chunk.meeting_date,
         score,
@@ -108,6 +106,7 @@ export class EmbeddingStore {
             : s.chunk.text
         ),
         chunk_type: chunk.chunk_type,
+        url: "",
       });
     }
 
@@ -149,45 +148,54 @@ export class EmbeddingStore {
 
 /**
  * Split a meeting into searchable text chunks.
+ * Uses the real Fathom data structure (markdown summary, speaker objects).
  */
 function chunkMeeting(meeting: Meeting): MeetingChunk[] {
   const chunks: MeetingChunk[] = [];
   const base = {
-    meeting_id: meeting.id,
+    recording_id: meeting.recording_id,
     meeting_title: meeting.title,
     meeting_date: meeting.created_at,
   };
 
-  // Title as a chunk
+  // Title
   chunks.push({ ...base, chunk_type: "title", text: meeting.title });
 
-  // Each summary section as a chunk
-  if (meeting.summary) {
-    for (const section of meeting.summary) {
-      const text = `${section.title}: ${section.bullets.join(". ")}`;
-      chunks.push({ ...base, chunk_type: "summary", text });
+  // Summary — split markdown into paragraph chunks
+  if (meeting.default_summary?.markdown_formatted) {
+    const sections = meeting.default_summary.markdown_formatted
+      .split(/^###\s+/m)
+      .filter((s) => s.trim().length > 0);
+
+    for (const section of sections) {
+      // Clean markdown links and formatting
+      const cleaned = section
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+        .replace(/\n/g, " ")
+        .trim();
+      if (cleaned.length > 0) {
+        chunks.push({ ...base, chunk_type: "summary", text: cleaned });
+      }
     }
   }
 
-  // Each action item as a chunk
-  if (meeting.action_items) {
-    for (const item of meeting.action_items) {
-      const text = item.assignee
-        ? `Action item for ${item.assignee}: ${item.text}`
-        : `Action item: ${item.text}`;
-      chunks.push({ ...base, chunk_type: "action_item", text });
-    }
+  // Action items
+  for (const item of meeting.action_items) {
+    const text = item.assignee
+      ? `Action item for ${item.assignee}: ${item.text}`
+      : `Action item: ${item.text}`;
+    chunks.push({ ...base, chunk_type: "action_item", text });
   }
 
-  // Transcript: group into ~500-token chunks preserving speaker context
+  // Transcript — group into ~500-token chunks
   if (meeting.transcript && meeting.transcript.length > 0) {
     let currentChunk = "";
     let currentSpeaker = "";
 
     for (const entry of meeting.transcript) {
-      const line = `${entry.speaker}: ${entry.text}`;
+      const speakerName = entry.speaker.display_name;
+      const line = `${speakerName}: ${entry.text}`;
 
-      // Rough token estimate: ~4 chars per token
       if (currentChunk.length + line.length > 2000) {
         if (currentChunk) {
           chunks.push({
@@ -198,14 +206,13 @@ function chunkMeeting(meeting: Meeting): MeetingChunk[] {
           });
         }
         currentChunk = line;
-        currentSpeaker = entry.speaker;
+        currentSpeaker = speakerName;
       } else {
         currentChunk += "\n" + line;
-        if (!currentSpeaker) currentSpeaker = entry.speaker;
+        if (!currentSpeaker) currentSpeaker = speakerName;
       }
     }
 
-    // Flush remaining
     if (currentChunk) {
       chunks.push({
         ...base,
@@ -219,9 +226,6 @@ function chunkMeeting(meeting: Meeting): MeetingChunk[] {
   return chunks;
 }
 
-/**
- * Cosine similarity between two vectors. Pure JS, no dependencies.
- */
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
   let normA = 0;

@@ -1,4 +1,4 @@
-import { FathomError, Meeting, PaginatedResponse } from "./types.js";
+import { FathomError, Meeting, PaginatedResponse, TranscriptResponse, SummaryResponse } from "./types.js";
 
 const BASE_URL = "https://api.fathom.ai/external/v1";
 
@@ -81,30 +81,27 @@ export class FathomClient {
     return response.json() as Promise<T>;
   }
 
-  // Meetings
+  // Meetings — returns paginated with items/next_cursor
   async listMeetings(params: {
     created_after?: string;
     created_before?: string;
-    "recorded_by[]"?: string[];
-    "teams[]"?: string[];
-    "calendar_invitees_domains[]"?: string[];
     cursor?: string;
     include_transcript?: boolean;
     include_summary?: boolean;
     include_action_items?: boolean;
     include_crm_matches?: boolean;
   }) {
-    return this.request("GET", "/meetings", params as Record<string, string | string[] | boolean | undefined>);
+    return this.request<PaginatedResponse>("GET", "/meetings", params as Record<string, string | boolean | undefined>);
   }
 
-  // Summary
-  async getSummary(recordingId: string) {
-    return this.request("GET", `/recordings/${recordingId}/summary`);
+  // Summary for a recording
+  async getSummary(recordingId: number) {
+    return this.request<SummaryResponse>("GET", `/recordings/${recordingId}/summary`);
   }
 
-  // Transcript
-  async getTranscript(recordingId: string) {
-    return this.request("GET", `/recordings/${recordingId}/transcript`);
+  // Transcript for a recording
+  async getTranscript(recordingId: number) {
+    return this.request<TranscriptResponse>("GET", `/recordings/${recordingId}/transcript`);
   }
 
   // Team Members
@@ -135,31 +132,32 @@ export class FathomClient {
 
   /**
    * Fetch ALL meetings in a date range, auto-paginating through all pages.
-   * Always includes summaries and action items (small payloads).
+   * Safety valve: max 20 pages to prevent infinite loops.
    */
   async listAllMeetings(params: {
     created_after?: string;
     created_before?: string;
-    "recorded_by[]"?: string[];
-    "teams[]"?: string[];
     include_summary?: boolean;
     include_action_items?: boolean;
   }): Promise<Meeting[]> {
     const all: Meeting[] = [];
     let cursor: string | undefined;
+    let pages = 0;
+    const MAX_PAGES = 20;
 
     do {
-      const page = await this.request<PaginatedResponse<Meeting>>(
+      const page = await this.request<PaginatedResponse>(
         "GET",
         "/meetings",
         {
           ...params,
           cursor,
-        } as Record<string, string | string[] | boolean | undefined>
+        } as Record<string, string | boolean | undefined>
       );
-      all.push(...page.results);
-      cursor = page.has_more ? page.cursor : undefined;
-    } while (cursor);
+      all.push(...page.items);
+      cursor = page.next_cursor ?? undefined;
+      pages++;
+    } while (cursor && pages < MAX_PAGES);
 
     return all;
   }

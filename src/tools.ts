@@ -247,7 +247,7 @@ export function registerTools(
             if (searchTranscripts) {
               for (const m of meetings) {
                 if (!m.transcript) {
-                  await cache.getMeetingDetail(m.id, true);
+                  await cache.getMeetingDetail(m.recording_id, true);
                 }
               }
               const updated = await cache.getForRange(daysBack);
@@ -304,7 +304,7 @@ export function registerTools(
         }
 
         case "fathom_get_meeting_detail": {
-          const meetingId = args!.meeting_id as string;
+          const meetingId = parseInt(args!.meeting_id as string, 10);
           const includeTranscript = args?.include_transcript !== false;
 
           const meeting = await cache.getMeetingDetail(meetingId, includeTranscript);
